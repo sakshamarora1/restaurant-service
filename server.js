@@ -1,7 +1,10 @@
 const express = require("express")
 const { createServer } = require("http")
 const { Server } = require("socket.io")
+const amqp = require("amqplib")
 const { connectToDatabase, getDb, ObjectId } = require("./db")
+const { QUEUE_NAMES, DistributedProcessorURI, sendOrderToQueue, getQueueLength } = require("./queue")
+const { prepareDish } = require("./chef")
 
 const app = express()
 const port = 3000
@@ -20,8 +23,10 @@ app.use(express.json())
 // const ordersDb = []
 const availableDishes = ["Pizza", "Burger", "Paneer", "Eggs", "Chicken", "Pasta", "Salad", "Tea"]
 
+let connection, channel
+
 // In-memory worker/chef queue
-const orderQueue = []
+// const orderQueue = []
 
 // Route to accept orders
 app.post("/order", async (req, res) => {
@@ -57,7 +62,8 @@ app.post("/order", async (req, res) => {
     await db.collection("orders").insertOne(order)
     io.emit("ORDER_TAKEN", order)
 
-    orderQueue.push(order)
+    // orderQueue.push(order)
+    await sendOrderToQueue(order, channel)
     return res.status(201).json(order)
   } catch (error) {
     return res.status(500).json({ error: "Server Error: " + error })
@@ -76,73 +82,62 @@ app.post("/serve", async (req, res) => {
 
 httpServer.listen(port, async () => {
   try {
-    await connectToDatabase();
+    await connectToDatabase()
     console.log(`Server is running on http://localhost:${port}`)
+
+    connection = await amqp.connect(DistributedProcessorURI)
+    channel = await connection.createChannel()
+
+    await startWorkers(channel)
   } catch (error) {
     console.error('Error starting the server:', error);
     process.exit(1);
   }
 })
 
-async function prepareDish(order) {
-  await new Promise(resolve => setTimeout(resolve, 4000))
-  order.status = "COMPLETED"
-  order.updatedAt = new Date().toLocaleString()
-  io.emit("ORDER_COMPLETED", order)
-  console.log(`Dish: ${order.dish} with _id: ${order._id} is Completed! (${order.updatedAt})`)
-  return order
-}
-
-async function prepareDishes() {
-  if (orderQueue.length > 0) {
-    const newOrders = orderQueue.filter(order => order.status === "TAKEN")
-    if (newOrders.length > 0) {
-      console.log("Current worker queue length: ", newOrders.length)
-      // const order = orderQueue.shift()
-      const completedDishes = await prepareDishesConcurrently(newOrders)
-
-      const db = getDb()
-      completedDishes.forEach(completedDish => {
-        // const index = ordersDb.findIndex(order => order._id === completedDish._id)
-        // if (index !== -1) {
-        //   ordersDb[index] = completedDish
-        // }
-        db.collection("orders").updateOne(
-          query = { "_id": new ObjectId(completedDish._id) },
-          update = { "$set": { status: completedDish.status, updatedAt: completedDish.updatedAt } },
-          function(err, res) {
-            if (err) throw err
-            console.log(`Order ${completedDish._id} updated in Database!`, res)
-          }
-        )
-      })
-      // ordersDb.push(...completedDishes)
-    }
-  }
-}
-
-async function prepareDishesConcurrently(newOrders) {
-  newOrders.forEach(newOrder => {
-    const index = orderQueue.findIndex(order => order._id === newOrder._id)
-    orderQueue[index].status = "PREPARING"
-    io.emit("ORDER_PREPARING", orderQueue[index])
-  })
-  const preparedOrders = await Promise.all(newOrders.map(prepareDish))
-  preparedOrders.forEach(preparedOrder => {
-    const index = orderQueue.findIndex(order => order._id === preparedOrder._id)
-    if (index !== -1) {
-      orderQueue.splice(index, 1)
-    }
-  })
-  return preparedOrders
-}
-
 // Check for new orders every second
-setInterval(() => {
-  prepareDishes().catch(error => console.error("Worker error: " + error))
-}, 1000)
+// setInterval(() => {
+//   prepareDishes().catch(error => console.error("Worker error: " + error))
+// }, 1000)
 
 // Log OrdersDb snapshot every 5 seconds
 // setInterval(() => {
 //   console.log("ordersDb:\n", ordersDb)
 // }, 5000)
+
+async function startWorkers(channel) {
+  try {
+    for (const queue of QUEUE_NAMES) {
+      await channel.assertQueue(queue, { durable: true })
+
+      channel.consume(queue, async (msg) => {
+        const queueLength = await getQueueLength(queue, channel)
+        console.log(`Current worker queue ${queue} length: ${queueLength}`)
+        const order = JSON.parse(msg.content.toString())
+
+        order.status = "PREPARING"
+        order.assignedTo = queue
+        console.log(`Preparing order ${order._id} by ${queue}`)
+        io.emit("ORDER_PREPARING", order)
+        // Process the order
+        const completedDish = await prepareDish(order)
+        io.emit("ORDER_COMPLETED", order)
+
+        const db = getDb()
+        db.collection("orders").updateOne(
+          query = { "_id": new ObjectId(completedDish._id) },
+          update = { "$set": { status: completedDish.status, updatedAt: completedDish.updatedAt, assignedTo: completedDish.assignedTo } },
+          function(err, res) {
+            if (err) throw err
+            console.log(`Order ${completedDish._id} updated in Database!`, res)
+          }
+        )
+        channel.ack(msg)
+      })
+      console.log("Chef is listening for orders from their queue: ", queue)
+    }
+
+  } catch (error) {
+    console.error("Error starting the workers", error)
+  }
+}
