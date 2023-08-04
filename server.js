@@ -1,7 +1,16 @@
 const express = require("express")
+const { createServer } = require("http")
+const { Server } = require("socket.io")
 
 const app = express()
 const port = 3000
+
+const httpServer = createServer(app)
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*"
+  }
+})
 
 // Middleware
 app.use(express.json())
@@ -32,6 +41,7 @@ app.post("/order", async (req, res) => {
       updatedAt: new Date().toLocaleString()
     }
     console.log("Waiter receiving: ", order)
+    io.emit("ORDER_RECEIVNG", order)
 
     // Time taken to take an order, replace with some validations maybe?
     await new Promise(resolve => setTimeout(resolve, 2000))
@@ -40,6 +50,7 @@ app.post("/order", async (req, res) => {
     order.updatedAt = new Date().toLocaleString()
     console.log("New Order: ", order)
     ordersDb.push(order)
+    io.emit("ORDER_TAKEN", order)
 
     orderQueue.push(order)
     return res.status(201).json(order)
@@ -58,7 +69,7 @@ app.post("/serve", async (req, res) => {
   }
 })
 
-app.listen(port, () => {
+httpServer.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`)
 })
 
@@ -66,6 +77,7 @@ async function prepareDish(order) {
   await new Promise(resolve => setTimeout(resolve, 4000))
   order.status = "COMPLETED"
   order.updatedAt = new Date().toLocaleString()
+  io.emit("ORDER_COMPLETED", order)
   console.log(`Dish: ${order.dish} is Completed! (${order.updatedAt})`)
   return order
 }
@@ -92,6 +104,7 @@ async function prepareDishesConcurrently(newOrders) {
   newOrders.forEach(newOrder => {
     const index = orderQueue.findIndex(order => order.dish === newOrder.dish)
     orderQueue[index].status = "PREPARING"
+    io.emit("ORDER_PREPARING", orderQueue[index])
   })
   const preparedOrders = await Promise.all(newOrders.map(prepareDish))
   preparedOrders.forEach(preparedOrder => {

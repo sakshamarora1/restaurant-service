@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Restaurant Service</title>
+</head>
+<body>
+  <h1>Restaurant Backend Service</h1>
+  <ul id="orderList"></ul>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.1.2/socket.io.js"></script>
+  <script>
+    const socket = io('http://localhost:3000');
+
+    socket.on('ORDER_RECEIVNG', (order) => {
+      const orderList = document.getElementById('orderList');
+      const listItem = document.createElement('li');
+      listItem.innerText = `Waiter is receiving order for "${order.dish}". Time: ${order.updatedAt}`;
+      orderList.appendChild(listItem);
+    });
+
+    // Handle new order event
+    socket.on('ORDER_TAKEN', (order) => {
+      const orderList = document.getElementById('orderList');
+      const listItem = document.createElement('li');
+      listItem.innerText = `Order for "${order.dish}" taken. Time: ${order.updatedAt}`;
+      orderList.appendChild(listItem);
+    });
+
+    socket.on('ORDER_PREPARING', (order) => {
+      const orderList = document.getElementById('orderList');
+      const listItem = document.createElement('li');
+      listItem.innerText = `Chef is preparing order for "${order.dish}". Time: ${order.updatedAt}`;
+      orderList.appendChild(listItem);
+    });
+
+    // Handle order prepared event
+    socket.on('ORDER_COMPLETED', (order) => {
+      const orderList = document.getElementById('orderList');
+      const listItem = document.createElement('li');
+      listItem.innerText = `Order for "${order.dish}" is prepared and ready to be served. Time: ${order.updatedAt}`;
+      orderList.appendChild(listItem);
+    });
+  </script>
+</body>
+</html>
