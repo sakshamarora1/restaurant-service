@@ -1,6 +1,7 @@
 const express = require("express")
 const { createServer } = require("http")
 const { Server } = require("socket.io")
+const { connectToDatabase, getDb, ObjectId } = require("./db")
 
 const app = express()
 const port = 3000
@@ -16,7 +17,7 @@ const io = new Server(httpServer, {
 app.use(express.json())
 
 // In-memory orders list, Replace later with DB
-const ordersDb = []
+// const ordersDb = []
 const availableDishes = ["Pizza", "Burger", "Paneer", "Eggs", "Chicken", "Pasta", "Salad", "Tea"]
 
 // In-memory worker/chef queue
@@ -26,6 +27,8 @@ const orderQueue = []
 app.post("/order", async (req, res) => {
   try {
     const { dish, specialInstructions } = req.body
+    const db = getDb()
+
     if (!dish) {
       return res.status(400).json({ error: "Dish name is required." })
     }
@@ -34,8 +37,8 @@ app.post("/order", async (req, res) => {
     }
 
     const order = {
-      dish,
-      specialInstructions,
+      dish: dish,
+      specialInstructions: specialInstructions,
       status: "PENDING",
       createdAt: new Date().toLocaleString(),
       updatedAt: new Date().toLocaleString()
@@ -49,7 +52,9 @@ app.post("/order", async (req, res) => {
     order.status = "TAKEN"
     order.updatedAt = new Date().toLocaleString()
     console.log("New Order: ", order)
-    ordersDb.push(order)
+
+    // ordersDb.push(order)
+    await db.collection("orders").insertOne(order)
     io.emit("ORDER_TAKEN", order)
 
     orderQueue.push(order)
@@ -69,8 +74,14 @@ app.post("/serve", async (req, res) => {
   }
 })
 
-httpServer.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`)
+httpServer.listen(port, async () => {
+  try {
+    await connectToDatabase();
+    console.log(`Server is running on http://localhost:${port}`)
+  } catch (error) {
+    console.error('Error starting the server:', error);
+    process.exit(1);
+  }
 })
 
 async function prepareDish(order) {
@@ -78,7 +89,7 @@ async function prepareDish(order) {
   order.status = "COMPLETED"
   order.updatedAt = new Date().toLocaleString()
   io.emit("ORDER_COMPLETED", order)
-  console.log(`Dish: ${order.dish} is Completed! (${order.updatedAt})`)
+  console.log(`Dish: ${order.dish} with _id: ${order._id} is Completed! (${order.updatedAt})`)
   return order
 }
 
@@ -89,11 +100,21 @@ async function prepareDishes() {
       console.log("Current worker queue length: ", newOrders.length)
       // const order = orderQueue.shift()
       const completedDishes = await prepareDishesConcurrently(newOrders)
+
+      const db = getDb()
       completedDishes.forEach(completedDish => {
-        const index = ordersDb.findIndex(order => order.dish === completedDish.dish)
-        if (index !== -1) {
-          ordersDb[index] = completedDish
-        }
+        // const index = ordersDb.findIndex(order => order._id === completedDish._id)
+        // if (index !== -1) {
+        //   ordersDb[index] = completedDish
+        // }
+        db.collection("orders").updateOne(
+          query = { "_id": new ObjectId(completedDish._id) },
+          update = { "$set": { status: completedDish.status, updatedAt: completedDish.updatedAt } },
+          function(err, res) {
+            if (err) throw err
+            console.log(`Order ${completedDish._id} updated in Database!`, res)
+          }
+        )
       })
       // ordersDb.push(...completedDishes)
     }
@@ -102,13 +123,13 @@ async function prepareDishes() {
 
 async function prepareDishesConcurrently(newOrders) {
   newOrders.forEach(newOrder => {
-    const index = orderQueue.findIndex(order => order.dish === newOrder.dish)
+    const index = orderQueue.findIndex(order => order._id === newOrder._id)
     orderQueue[index].status = "PREPARING"
     io.emit("ORDER_PREPARING", orderQueue[index])
   })
   const preparedOrders = await Promise.all(newOrders.map(prepareDish))
   preparedOrders.forEach(preparedOrder => {
-    const index = orderQueue.findIndex(order => order.dish === preparedOrder.dish)
+    const index = orderQueue.findIndex(order => order._id === preparedOrder._id)
     if (index !== -1) {
       orderQueue.splice(index, 1)
     }
@@ -122,6 +143,6 @@ setInterval(() => {
 }, 1000)
 
 // Log OrdersDb snapshot every 5 seconds
-setInterval(() => {
-  console.log("ordersDb:\n", ordersDb)
-}, 5000)
+// setInterval(() => {
+//   console.log("ordersDb:\n", ordersDb)
+// }, 5000)
