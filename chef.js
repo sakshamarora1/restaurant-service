@@ -1,6 +1,7 @@
 // const { ObjectId } = require("./db")
 
 async function prepareDish(order) {
+  // TODO:  Add logic where if a task is just time blocking or such, then worker should work on the next available task
   await new Promise(resolve => setTimeout(resolve, 4000))
   order.status = "COMPLETED"
   order.updatedAt = new Date().toLocaleString()

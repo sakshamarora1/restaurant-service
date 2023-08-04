@@ -3,7 +3,7 @@ const { createServer } = require("http")
 const { Server } = require("socket.io")
 const amqp = require("amqplib")
 const { connectToDatabase, getDb, ObjectId } = require("./db")
-const { QUEUE_NAMES, DistributedProcessorURI, sendOrderToQueue, getQueueLength } = require("./queue")
+const { QUEUE_NAMES, DistributedProcessorURI, sendOrderToQueue } = require("./queue")
 const { prepareDish } = require("./chef")
 
 const app = express()
@@ -48,6 +48,7 @@ app.post("/order", async (req, res) => {
       createdAt: new Date().toLocaleString(),
       updatedAt: new Date().toLocaleString()
     }
+    // TODO: Add worker queues for waiters too
     console.log("Waiter receiving: ", order)
     io.emit("ORDER_RECEIVNG", order)
 
@@ -111,8 +112,6 @@ async function startWorkers(channel) {
       await channel.assertQueue(queue, { durable: true })
 
       channel.consume(queue, async (msg) => {
-        const queueLength = await getQueueLength(queue, channel)
-        console.log(`Current worker queue ${queue} length: ${queueLength}`)
         const order = JSON.parse(msg.content.toString())
 
         order.status = "PREPARING"

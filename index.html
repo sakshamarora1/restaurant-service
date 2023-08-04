@@ -22,14 +22,14 @@
     socket.on('ORDER_TAKEN', (order) => {
       const orderList = document.getElementById('orderList');
       const listItem = document.createElement('li');
-      listItem.innerText = `Order for "${order.dish}" taken. Time: ${order.updatedAt}`;
+      listItem.innerText = `Order for "${order.dish}" taken by waiter. Time: ${order.updatedAt}`;
       orderList.appendChild(listItem);
     });
 
     socket.on('ORDER_PREPARING', (order) => {
       const orderList = document.getElementById('orderList');
       const listItem = document.createElement('li');
-      listItem.innerText = `Chef is preparing order for "${order.dish}". Time: ${order.updatedAt}`;
+      listItem.innerText = `${order.assignedTo} is preparing order for "${order.dish}". Time: ${order.updatedAt}`;
       orderList.appendChild(listItem);
     });
 
